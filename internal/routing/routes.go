@@ -296,27 +296,24 @@ func findTownRoot(startDir string) string {
 // from <townRoot>/.beads/routes.jsonl.
 // Returns (routes, townRoot). Returns nil routes if not in an orchestrator town or no routes found.
 func findTownRoutes(currentBeadsDir string) ([]Route, string) {
-	// First try the current beads dir (works if we're already at town level)
+	// First, find the actual town root (directory with mayor/town.json)
+	townRoot := findTownRoot(currentBeadsDir)
+	if townRoot != "" {
+		// Load routes from town beads directory
+		townBeadsDir := filepath.Join(townRoot, ".beads")
+		routes, err := LoadRoutes(townBeadsDir)
+		if err == nil && len(routes) > 0 {
+			return routes, townRoot
+		}
+	}
+
+	// Not in a town context - fall back to local routes for standalone beads
 	routes, err := LoadRoutes(currentBeadsDir)
 	if err == nil && len(routes) > 0 {
-		// Return the parent of the beads dir as "town root" for path resolution
 		return routes, filepath.Dir(currentBeadsDir)
 	}
 
-	// Walk up to find town root
-	townRoot := findTownRoot(currentBeadsDir)
-	if townRoot == "" {
-		return nil, "" // Not in a town
-	}
-
-	// Load routes from town beads
-	townBeadsDir := filepath.Join(townRoot, ".beads")
-	routes, err = LoadRoutes(townBeadsDir)
-	if err != nil || len(routes) == 0 {
-		return nil, "" // No town routes
-	}
-
-	return routes, townRoot
+	return nil, ""
 }
 
 // resolveRedirect checks for a redirect file in the beads directory

@@ -2,6 +2,8 @@ package routing
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -284,5 +286,108 @@ func TestDetectUserRole_DefaultContributor(t *testing.T) {
 	}
 	if role != Contributor {
 		t.Fatalf("expected %s, got %s", Contributor, role)
+	}
+}
+
+func TestFindTownRoutes_RigWithLocalRoutes(t *testing.T) {
+	// Create a temp directory structure simulating a town with a rig
+	// that has its own routes.jsonl file
+	tmpDir := t.TempDir()
+
+	// Create town structure: mayor/town.json marks the town root
+	townRoot := tmpDir
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create town-level beads with routes
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	townRoutes := `{"prefix": "hq-", "path": "."}
+{"prefix": "bd-", "path": "beads/mayor/rig"}
+`
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(townRoutes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a rig inside the town with its own routes.jsonl
+	rigBeadsDir := filepath.Join(townRoot, "myrig", ".beads")
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// The rig has a different/stale routes file - this should NOT be used
+	rigRoutes := `{"prefix": "rig-", "path": "stale/path"}
+`
+	if err := os.WriteFile(filepath.Join(rigBeadsDir, "routes.jsonl"), []byte(rigRoutes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test: from rig beads dir, findTownRoutes should return town routes and town root
+	routes, gotTownRoot := findTownRoutes(rigBeadsDir)
+
+	// Should return routes from town, not from rig
+	if len(routes) != 2 {
+		t.Errorf("expected 2 routes from town, got %d", len(routes))
+	}
+
+	// Should return the actual town root, not the rig directory
+	if gotTownRoot != townRoot {
+		t.Errorf("expected townRoot=%q, got %q", townRoot, gotTownRoot)
+	}
+
+	// Verify we got town routes (hq-, bd-), not rig routes (rig-)
+	foundHQ := false
+	foundBD := false
+	for _, r := range routes {
+		if r.Prefix == "hq-" {
+			foundHQ = true
+		}
+		if r.Prefix == "bd-" {
+			foundBD = true
+		}
+		if r.Prefix == "rig-" {
+			t.Errorf("unexpected rig route found - should use town routes, not rig-local routes")
+		}
+	}
+	if !foundHQ || !foundBD {
+		t.Errorf("expected town routes (hq-, bd-), got: %v", routes)
+	}
+}
+
+func TestFindTownRoutes_StandaloneBeads(t *testing.T) {
+	// Test that standalone beads (not in a town) still work with local routes
+	tmpDir := t.TempDir()
+
+	// Create a beads directory with routes but no town structure
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	localRoutes := `{"prefix": "local-", "path": "somewhere"}
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(localRoutes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test: findTownRoutes should fall back to local routes
+	routes, gotRoot := findTownRoutes(beadsDir)
+
+	if len(routes) != 1 {
+		t.Errorf("expected 1 local route, got %d", len(routes))
+	}
+
+	if routes[0].Prefix != "local-" {
+		t.Errorf("expected local- prefix, got %s", routes[0].Prefix)
+	}
+
+	// Root should be parent of beads dir for standalone usage
+	expectedRoot := tmpDir
+	if gotRoot != expectedRoot {
+		t.Errorf("expected root=%q, got %q", expectedRoot, gotRoot)
 	}
 }
